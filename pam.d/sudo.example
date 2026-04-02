@@ -1,0 +1,13 @@
+# /etc/pam.d/sudo – example configuration using pam_fprint_fixed
+#
+# Fingerprint first (10 s timeout, Enter key falls through), then password.
+# If pam_fprint_fixed returns success  → skip next 2 lines → auth OK
+# If it returns anything else          → ignore, try pam_unix next
+
+auth  [success=2 default=ignore]  pam_fprint_fixed.so  timeout=10
+auth  [success=1 default=ignore]  pam_unix.so          nullok try_first_pass
+auth  requisite                    pam_deny.so
+auth  required                     pam_permit.so
+
+account  include  system-auth
+session  include  system-auth
