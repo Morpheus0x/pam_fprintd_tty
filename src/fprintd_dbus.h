@@ -15,10 +15,11 @@
 #include <dbus/dbus.h>
 #include <stdbool.h>
 
-/* Opaque context for an fprintd session */
+/* Context for an fprintd session */
 typedef struct fprintd_ctx {
     DBusConnection *conn;
     char           *device_path;   /* e.g. /net/reactivated/Fprint/Device/0 */
+    bool            claimed;       /* true after Claim(), false after Release() */
     bool            verify_active; /* true between VerifyStart / VerifyStop  */
 } fprintd_ctx;
 
