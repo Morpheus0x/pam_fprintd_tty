@@ -1,30 +1,58 @@
-# pam_fprint_fixed – Makefile (stub, finalised in task 5)
+# pam_fprint_fixed – Build a shared PAM module (.so)
+#
+# Dependencies:
+#   - libpam development headers  (pam package)
+#   - libdbus-1 development headers (dbus package)
+#   - pkg-config
+#
+# Usage:
+#   make            – build pam_fprint_fixed.so
+#   make clean      – remove build artefacts
+#   make debug      – build with debug symbols, no optimisation
+#   make install    – install .so + config (runs install.sh, needs root)
 
 CC       ?= gcc
-CFLAGS   := -Wall -Wextra -Werror -fPIC -O2 \
-            $(shell pkg-config --cflags dbus-1) \
-            $(shell pkg-config --cflags pam)
-LDFLAGS  := -shared \
-            $(shell pkg-config --libs dbus-1)
-# pam has no .pc on many distros; link explicitly
-LDFLAGS  += -lpam
 
-SRC      := src/pam_fprint_fixed.c src/fprintd_dbus.c
+# dbus-1 always has a .pc file; pam usually does not
+DBUS_CFLAGS := $(shell pkg-config --cflags dbus-1 2>/dev/null)
+DBUS_LIBS   := $(shell pkg-config --libs   dbus-1 2>/dev/null)
+
+CFLAGS   := -std=c11 -Wall -Wextra -Wpedantic -Werror \
+            -fPIC -D_GNU_SOURCE \
+            $(DBUS_CFLAGS)
+
+# Release flags (overridden by `make debug`)
+OPT      ?= -O2
+
+LDFLAGS  := -shared -Wl,--no-undefined
+LIBS     := $(DBUS_LIBS) -lpam
+
+SRCDIR   := src
+SRC      := $(SRCDIR)/pam_fprint_fixed.c $(SRCDIR)/fprintd_dbus.c
 OBJ      := $(SRC:.c=.o)
+DEP      := $(SRC:.c=.d)
 TARGET   := pam_fprint_fixed.so
 
-.PHONY: all clean install
+# ── Targets ───────────────────────────────────────────────────────────
+
+.PHONY: all clean debug install
 
 all: $(TARGET)
 
-$(TARGET): $(OBJ)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
+debug: OPT := -O0 -g3 -DDEBUG
+debug: $(TARGET)
 
-src/%.o: src/%.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+$(TARGET): $(OBJ)
+	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
+
+$(SRCDIR)/%.o: $(SRCDIR)/%.c
+	$(CC) $(CFLAGS) $(OPT) -MMD -MP -c -o $@ $<
 
 clean:
-	rm -f $(OBJ) $(TARGET)
+	rm -f $(OBJ) $(DEP) $(TARGET)
 
-install:
-	@echo "Run install.sh as root instead"
+install: $(TARGET)
+	@./install.sh
+
+# Auto-generated header dependency tracking
+-include $(DEP)

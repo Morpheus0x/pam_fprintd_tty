@@ -1,8 +1,24 @@
-# /etc/pam.d/sudo – example configuration using pam_fprint_fixed
+# /etc/pam.d/sudo – pam_fprint_fixed configuration
 #
-# Fingerprint first (10 s timeout, Enter key falls through), then password.
-# If pam_fprint_fixed returns success  → skip next 2 lines → auth OK
-# If it returns anything else          → ignore, try pam_unix next
+# Authentication flow:
+#
+#   1. pam_fprint_fixed.so  tries fingerprint with a 10 s timeout.
+#      - Fingerprint match  → auth succeeds (skip next 2 lines)
+#      - Enter key / timeout / Ctrl+C / no reader → ignored, try next
+#
+#   2. pam_unix.so           prompts for password.
+#      - Correct password    → auth succeeds (skip next line)
+#      - Wrong password      → falls through to pam_deny
+#
+#   3. pam_deny.so           denies access (all methods failed)
+#   4. pam_permit.so         reached only on success (jump target)
+#
+# Module arguments:
+#   timeout=N    seconds to wait for fingerprint (default: 10)
+#   debug        log detailed diagnostics to syslog (journalctl -t sudo)
+#
+# To add debug logging, append "debug" to the first line:
+#   auth  [success=2 default=ignore]  pam_fprint_fixed.so  timeout=10 debug
 
 auth  [success=2 default=ignore]  pam_fprint_fixed.so  timeout=10
 auth  [success=1 default=ignore]  pam_unix.so          nullok try_first_pass
