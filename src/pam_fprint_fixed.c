@@ -12,6 +12,12 @@
  * Module arguments:
  *   timeout=N   seconds to wait for fingerprint (default 10)
  *   debug       enable syslog debug messages
+ *
+ * Safety:
+ *   - Terminal settings are restored on every exit path, including
+ *     signal delivery (SIGINT, SIGTERM, SIGHUP).
+ *   - Original signal handlers are saved and reinstated on cleanup.
+ *   - Stale terminal input is flushed before the poll loop starts.
  */
 
 #define PAM_SM_AUTH
@@ -29,6 +35,7 @@
 #include <string.h>
 #include <syslog.h>
 #include <termios.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "fprintd_dbus.h"
@@ -41,12 +48,12 @@
 /* ── Module-wide state (only valid for the duration of one call) ─── */
 
 typedef struct {
-    int           timeout_sec;
-    int           debug;
-    int           tty_fd;       /* /dev/tty file descriptor            */
-    struct termios orig_tio;    /* original terminal settings          */
-    int           tio_saved;    /* whether orig_tio is valid           */
-    fprintd_ctx   fp;           /* fprintd D-Bus context               */
+    int            timeout_sec;
+    int            debug;
+    int            tty_fd;       /* /dev/tty file descriptor            */
+    struct termios orig_tio;     /* original terminal settings          */
+    int            tio_saved;    /* whether orig_tio is valid           */
+    fprintd_ctx    fp;           /* fprintd D-Bus context               */
 } module_ctx;
 
 /* ── Forward declarations ─────────────────────────────────────────── */
@@ -55,8 +62,90 @@ static void  parse_args(module_ctx *m, int argc, const char **argv);
 static int   tty_open_raw(module_ctx *m);
 static void  tty_restore(module_ctx *m);
 static void  tty_write(module_ctx *m, const char *msg);
-static void  dbg(const module_ctx *m, const char *fmt, ...);
+static void  install_signal_handlers(module_ctx *m);
+static void  restore_signal_handlers(void);
 static void  cleanup(module_ctx *m);
+static void  dbg(const module_ctx *m, const char *fmt, ...);
+static void  log_err(const char *fmt, ...);
+
+/* ── Signal handling ──────────────────────────────────────────────── *
+ *                                                                     *
+ * We temporarily install handlers for SIGINT, SIGTERM, and SIGHUP     *
+ * while the terminal is in raw mode.  The handlers:                   *
+ *   1. Restore the terminal to its original settings                  *
+ *   2. Re-install the original (saved) handler                        *
+ *   3. Re-raise the signal so the calling process (sudo) sees it      *
+ *                                                                     *
+ * This guarantees the user's terminal is never left in a broken       *
+ * state, even if the process is killed during fingerprint scanning.   *
+ * ──────────────────────────────────────────────────────────────────── */
+
+/*
+ * File-scope pointer so the signal handler can find the module context.
+ * Only set while the terminal is in raw mode; NULL otherwise.
+ */
+static volatile sig_atomic_t g_signal_active = 0;
+static module_ctx           *g_signal_ctx    = NULL;
+
+/* Saved original signal dispositions */
+static struct sigaction g_old_sigint;
+static struct sigaction g_old_sigterm;
+static struct sigaction g_old_sighup;
+
+static void signal_handler(int sig)
+{
+    /*
+     * Restore terminal settings.  tty_restore() is safe here because
+     * it only calls tcsetattr() and close(), both of which are
+     * async-signal-safe (POSIX.1-2008).
+     */
+    if (g_signal_ctx)
+        tty_restore(g_signal_ctx);
+
+    g_signal_ctx    = NULL;
+    g_signal_active = 0;
+
+    /* Reinstate the original handler and re-raise so the caller sees it */
+    const struct sigaction *old = NULL;
+    switch (sig) {
+    case SIGINT:  old = &g_old_sigint;  break;
+    case SIGTERM: old = &g_old_sigterm; break;
+    case SIGHUP:  old = &g_old_sighup;  break;
+    default:      return;
+    }
+
+    sigaction(sig, old, NULL);
+    raise(sig);
+}
+
+static void install_signal_handlers(module_ctx *m)
+{
+    g_signal_ctx    = m;
+    g_signal_active = 1;
+
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = signal_handler;
+    sa.sa_flags   = 0;            /* no SA_RESTART: we want EINTR in poll */
+    sigemptyset(&sa.sa_mask);
+
+    sigaction(SIGINT,  &sa, &g_old_sigint);
+    sigaction(SIGTERM, &sa, &g_old_sigterm);
+    sigaction(SIGHUP,  &sa, &g_old_sighup);
+}
+
+static void restore_signal_handlers(void)
+{
+    if (!g_signal_active)
+        return;
+
+    sigaction(SIGINT,  &g_old_sigint,  NULL);
+    sigaction(SIGTERM, &g_old_sigterm, NULL);
+    sigaction(SIGHUP,  &g_old_sighup,  NULL);
+
+    g_signal_ctx    = NULL;
+    g_signal_active = 0;
+}
 
 /* ── PAM entry points ─────────────────────────────────────────────── */
 
@@ -72,12 +161,15 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
 
     parse_args(&m, argc, argv);
 
+    dbg(&m, "pam_fprint_fixed: module loaded (timeout=%d, debug=%d)",
+        m.timeout_sec, m.debug);
+
     /* ── 1. Get the username from PAM ─────────────────────────────── */
 
     const char *username = NULL;
     int rc = pam_get_user(pamh, &username, NULL);
     if (rc != PAM_SUCCESS || !username || !*username) {
-        dbg(&m, "pam_fprint_fixed: could not determine username");
+        log_err("pam_fprint_fixed: could not determine username (rc=%d)", rc);
         return PAM_AUTHINFO_UNAVAIL;
     }
 
@@ -105,15 +197,28 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
     /* ── 4. Open terminal for keypress detection ──────────────────── */
 
     if (tty_open_raw(&m) < 0) {
-        dbg(&m, "pam_fprint_fixed: cannot open /dev/tty, skipping");
+        log_err("pam_fprint_fixed: cannot open /dev/tty, skipping");
         cleanup(&m);
         return PAM_AUTHINFO_UNAVAIL;
     }
 
+    /*
+     * Install signal handlers AFTER opening the terminal in raw mode,
+     * so they can restore it if we get killed.
+     */
+    install_signal_handlers(&m);
+
+    /*
+     * Flush any stale input that might be sitting in the tty buffer
+     * (e.g. from a previous failed sudo attempt or accidental keypress).
+     * Without this, a stale byte would trigger immediate fallback.
+     */
+    tcflush(m.tty_fd, TCIFLUSH);
+
     /* ── 5. Start fingerprint verification ────────────────────────── */
 
     if (fprintd_verify_start(&m.fp, username) < 0) {
-        dbg(&m, "pam_fprint_fixed: VerifyStart failed");
+        log_err("pam_fprint_fixed: VerifyStart failed for '%s'", username);
         cleanup(&m);
         return PAM_AUTHINFO_UNAVAIL;
     }
@@ -126,7 +231,7 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
 
     int dbus_fd = fprintd_get_fd(&m.fp);
     if (dbus_fd < 0) {
-        dbg(&m, "pam_fprint_fixed: cannot get D-Bus fd");
+        log_err("pam_fprint_fixed: cannot get D-Bus fd");
         cleanup(&m);
         return PAM_AUTHINFO_UNAVAIL;
     }
@@ -144,22 +249,30 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
     struct timespec t_start, t_now;
     clock_gettime(CLOCK_MONOTONIC, &t_start);
 
+    dbg(&m, "pam_fprint_fixed: entering poll loop (tty_fd=%d, dbus_fd=%d, "
+        "timeout=%dms)", m.tty_fd, dbus_fd, timeout_ms);
+
     for (;;) {
         int n = poll(fds, 2, remaining);
 
         if (n < 0) {
             if (errno == EINTR) {
                 /*
-                 * Signal received (e.g. Ctrl+C → SIGINT delivered to
-                 * the process).  Treat as "user wants to cancel
-                 * fingerprint and fall through to password".
+                 * Signal received (e.g. Ctrl+C → SIGINT).
+                 *
+                 * Our signal handler already restored the terminal and
+                 * re-raised the signal with the original handler.  If
+                 * we're still alive, the original handler must have
+                 * returned (SA_RESTART wasn't set and the handler didn't
+                 * terminate us).  Fall through to password.
                  */
                 dbg(&m, "pam_fprint_fixed: interrupted by signal, "
                     "falling back to password");
+                tty_write(&m, "\n");
                 break;
             }
             /* Unexpected poll error */
-            dbg(&m, "pam_fprint_fixed: poll error: %s", strerror(errno));
+            log_err("pam_fprint_fixed: poll error: %s", strerror(errno));
             break;
         }
 
@@ -184,15 +297,16 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
                  * key avoids confusion if someone starts typing their
                  * password immediately.
                  */
-                dbg(&m, "pam_fprint_fixed: keypress detected, "
-                    "falling back to password");
+                dbg(&m, "pam_fprint_fixed: keypress detected (%d byte(s)), "
+                    "falling back to password", (int)nr);
                 break;
             }
         }
 
         if (fds[0].revents & (POLLHUP | POLLERR)) {
             /* Terminal gone – bail out */
-            dbg(&m, "pam_fprint_fixed: tty hangup/error");
+            dbg(&m, "pam_fprint_fixed: tty hangup/error (revents=0x%x)",
+                (unsigned)fds[0].revents);
             break;
         }
 
@@ -215,13 +329,21 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
                 goto done;
 
             case FP_RESULT_ERROR:
-                dbg(&m, "pam_fprint_fixed: fprintd error");
+                dbg(&m, "pam_fprint_fixed: fprintd reported an error");
+                tty_write(&m, "pam_fprint_fixed: fingerprint reader error\n");
                 goto done;
 
             case FP_RESULT_PENDING:
                 /* Retry events (swipe-too-short, etc.) – keep waiting */
+                dbg(&m, "pam_fprint_fixed: fprintd pending (retry event)");
                 break;
             }
+        }
+
+        if (fds[1].revents & (POLLHUP | POLLERR)) {
+            dbg(&m, "pam_fprint_fixed: D-Bus fd hangup/error (revents=0x%x)",
+                (unsigned)fds[1].revents);
+            break;
         }
 
         /* ── Recalculate remaining timeout ────────────────────────── */
@@ -231,7 +353,8 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
                         + (t_now.tv_nsec - t_start.tv_nsec) / 1000000L;
         remaining = timeout_ms - (int)elapsed_ms;
         if (remaining <= 0) {
-            dbg(&m, "pam_fprint_fixed: timeout (elapsed)");
+            dbg(&m, "pam_fprint_fixed: timeout (elapsed after %ldms)",
+                elapsed_ms);
             tty_write(&m, "\npam_fprint_fixed: fingerprint timeout, "
                           "falling back to password\n");
             break;
@@ -239,6 +362,8 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
     }
 
 done:
+    dbg(&m, "pam_fprint_fixed: returning %s",
+        pam_result == PAM_SUCCESS ? "PAM_SUCCESS" : "PAM_AUTHINFO_UNAVAIL");
     cleanup(&m);
     return pam_result;
 }
@@ -282,15 +407,13 @@ static int tty_open_raw(module_ctx *m)
 {
     m->tty_fd = open("/dev/tty", O_RDWR | O_NOCTTY);
     if (m->tty_fd < 0) {
-        syslog(LOG_AUTH | LOG_ERR,
-               "pam_fprint_fixed: open(/dev/tty): %s", strerror(errno));
+        log_err("pam_fprint_fixed: open(/dev/tty): %s", strerror(errno));
         return -1;
     }
 
     /* Save the current terminal settings so we can restore them later */
     if (tcgetattr(m->tty_fd, &m->orig_tio) < 0) {
-        syslog(LOG_AUTH | LOG_ERR,
-               "pam_fprint_fixed: tcgetattr: %s", strerror(errno));
+        log_err("pam_fprint_fixed: tcgetattr: %s", strerror(errno));
         close(m->tty_fd);
         m->tty_fd = -1;
         return -1;
@@ -311,8 +434,7 @@ static int tty_open_raw(module_ctx *m)
     raw.c_cc[VTIME] = 0;
 
     if (tcsetattr(m->tty_fd, TCSANOW, &raw) < 0) {
-        syslog(LOG_AUTH | LOG_ERR,
-               "pam_fprint_fixed: tcsetattr: %s", strerror(errno));
+        log_err("pam_fprint_fixed: tcsetattr: %s", strerror(errno));
         close(m->tty_fd);
         m->tty_fd = -1;
         m->tio_saved = 0;
@@ -324,6 +446,9 @@ static int tty_open_raw(module_ctx *m)
 
 /*
  * tty_restore – restore original terminal settings and close the fd.
+ *
+ * This function is async-signal-safe: it only calls tcsetattr() and
+ * close(), both of which POSIX guarantees are safe in signal handlers.
  */
 static void tty_restore(module_ctx *m)
 {
@@ -352,17 +477,21 @@ static void tty_write(module_ctx *m, const char *msg)
 /* ── Cleanup ──────────────────────────────────────────────────────── */
 
 /*
- * cleanup – stop fprintd, restore terminal, free resources.
- * Safe to call multiple times.
+ * cleanup – stop fprintd, restore terminal, restore signal handlers,
+ * free resources.  Safe to call multiple times.
  */
 static void cleanup(module_ctx *m)
 {
     fprintd_close(&m->fp);
     tty_restore(m);
+    restore_signal_handlers();
 }
 
-/* ── Debug logging ────────────────────────────────────────────────── */
+/* ── Logging ──────────────────────────────────────────────────────── */
 
+/*
+ * dbg – log at LOG_DEBUG level, only when the "debug" module arg is set.
+ */
 static void dbg(const module_ctx *m, const char *fmt, ...)
 {
     if (!m->debug)
@@ -370,5 +499,17 @@ static void dbg(const module_ctx *m, const char *fmt, ...)
     va_list ap;
     va_start(ap, fmt);
     vsyslog(LOG_AUTH | LOG_DEBUG, fmt, ap);
+    va_end(ap);
+}
+
+/*
+ * log_err – unconditionally log at LOG_ERR level.
+ * Used for errors that should always be visible, regardless of debug flag.
+ */
+static void log_err(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vsyslog(LOG_AUTH | LOG_ERR, fmt, ap);
     va_end(ap);
 }
