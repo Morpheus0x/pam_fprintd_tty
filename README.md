@@ -1,42 +1,64 @@
 # pam_fprintd_tty
 
-A custom PAM module that provides seamless fingerprint-then-password authentication for `sudo` and other PAM-aware services on Linux. It communicates with the `fprintd` daemon over D-Bus and gracefully falls back to password authentication on timeout, Ctrl+C, or fingerprint mismatch.
+A custom PAM module for fingerprint authentication via `fprintd` that lets you press Ctrl+C to abort and fall back to password. Designed for `sudo` and other terminal-based PAM services where `/dev/tty` is available. The standard `pam_fprintd` module blocks until timeout with no way to cancel mid-scan — this module fixes that by opening the TTY in raw mode and using `poll()` to detect keypresses during the fingerprint scan.
 
 ## Features
 
-- **Fingerprint first, password fallback** -- prompts for fingerprint, falls through to the standard password prompt on failure
-- **Ctrl+C support** -- press Ctrl+C during the fingerprint prompt to immediately switch to password (works even though `sudo` blocks SIGINT during PAM authentication)
-- **Multiple attempts** -- silently retries fingerprint verification up to 3 times with a grace period between attempts to avoid rapid-fire failures
+- **Ctrl+C to abort** -- press Ctrl+C during the fingerprint scan to immediately skip to password authentication (works even though `sudo` blocks SIGINT during PAM authentication)
+- **Multiple attempts** -- retries fingerprint verification up to 3 times with a grace period between attempts to avoid rapid-fire failures
 - **Configurable timeout** -- per-attempt timeout (default 10 seconds) resets after each retry
 - **Graceful degradation** -- if `fprintd` is not running or no fingerprints are enrolled, silently falls through to password without errors
 - **Terminal safety** -- terminal settings are always restored, even on signals (SIGTERM, SIGHUP)
 - **D-Bus native** -- talks directly to `fprintd` via D-Bus, no subprocess spawning
 
-## Dependencies
+## Installation
+
+### NixOS
+
+Download [`pam.d/pam_sudo.nix`](pam.d/pam_sudo.nix) and import it in your `configuration.nix`. That's it — Nix will fetch the source from Git, build the module, and configure the PAM stack automatically:
+
+```nix
+imports = [
+  /path/to/pam_sudo.nix
+];
+```
+
+Then rebuild:
+
+```bash
+sudo nixos-rebuild switch
+```
+
+The module disables the stock `pam_fprintd` integration and inserts `pam_fprintd_tty` before `pam_unix` in the `sudo` PAM service. You can adjust the timeout and enable debug logging by editing the `settings` block inside the file.
+
+#### Local development (NixOS)
+
+For iterating on the module source locally, use [`pam.d/dev_pam_sudo.nix`](pam.d/dev_pam_sudo.nix) instead. It builds from a local checkout rather than fetching from Git, so changes take effect on the next `nixos-rebuild switch`:
+
+```nix
+imports = [
+  /path/to/pam-fprintd-tty/pam.d/dev_pam_sudo.nix
+];
+```
+
+You can also build the `.so` directly or enter a development shell:
+
+```bash
+nix-build                # → result/lib/security/pam_fprintd_tty.so
+nix-shell                # drops you into a shell with all deps
+make                     # build inside nix-shell
+```
+
+### Other distributions
+
+#### Dependencies
 
 - `libpam` development headers
 - `libdbus-1` development headers
 - `pkg-config`
 - `fprintd` (runtime)
 
-## Building
-
-### NixOS (recommended)
-
-```bash
-nix-build
-```
-
-The resulting `.so` is at `result/lib/security/pam_fprintd_tty.so`.
-
-For development, enter a shell with all dependencies:
-
-```bash
-nix-shell
-make
-```
-
-### Other distributions
+#### Build and install
 
 ```bash
 make
@@ -49,35 +71,9 @@ The Makefile auto-detects the correct PAM module directory for your distribution
 sudo make install PAMDIR=/usr/lib/security
 ```
 
-## Configuration
+#### PAM configuration
 
-### NixOS
-
-Import the provided NixOS module in your `configuration.nix`:
-
-```nix
-imports = [
-  /path/to/pam-fprintd-tty/pam.d/pam_sudo.nix
-];
-```
-
-For local development, use the dev variant instead:
-
-```nix
-imports = [
-  /path/to/pam-fprintd-tty/pam.d/dev_pam_sudo.nix
-];
-```
-
-Then rebuild:
-
-```bash
-sudo nixos-rebuild switch
-```
-
-### Other distributions
-
-After `make install`, edit `/etc/pam.d/sudo` (see `pam.d/sudo.example` for a complete example):
+After installing, edit `/etc/pam.d/sudo` (see [`pam.d/sudo.example`](pam.d/sudo.example) for a complete example):
 
 ```
 auth  [success=2 default=ignore]  pam_fprintd_tty.so  timeout=10
@@ -89,7 +85,7 @@ account  include  system-auth
 session  include  system-auth
 ```
 
-### Module arguments
+## Module arguments
 
 | Argument    | Description                                      | Default |
 |-------------|--------------------------------------------------|---------|
