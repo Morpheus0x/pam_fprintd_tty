@@ -1,35 +1,59 @@
-# NixOS configuration snippet for pam_fprint_fixed
+# NixOS module: fingerprint + password authentication using pam_fprint_fixed
 #
-# Add this to your /etc/nixos/configuration.nix (or a separate module)
-# and run: sudo nixos-rebuild switch
+# This replaces the standard pam_fprintd integration with our custom module
+# that provides a smoother UX: shows a prompt, accepts fingerprint OR
+# Enter-key / timeout to fall back to password.
 #
-# Prerequisites:
-#   - fprintd must be enabled:  services.fprintd.enable = true;
-#   - The .so must be built and installed to the path below.
-#     Adjust the path if you installed it elsewhere.
+# Usage:
+#   In your configuration.nix (or wherever you manage imports):
+#
+#     imports = [
+#       /path/to/pam_fprint_fixed/pam.d/sudo.nixos.example.nix
+#     ];
+#
+#   Then:  sudo nixos-rebuild switch
 
-{ config, lib, pkgs, ... }:
+{ config, pkgs, lib, ... }:
 
 let
-  # Path where install.sh placed the module (default for Arch-style)
-  pamModulePath = "/usr/lib/security/pam_fprint_fixed.so";
+  # Build the PAM module from the project source
+  pam-fprint-fixed = pkgs.callPackage ../package.nix { };
 in
 {
-  # Enable fprintd
+  # ── fprintd daemon + driver ───────────────────────────────────────
   services.fprintd.enable = true;
+  services.fprintd.tod.enable = true;
+  services.fprintd.tod.driver = pkgs.libfprint-2-tod1-goodix;
 
-  # Override the sudo PAM service
+  # ── sudo: fingerprint first, then password ────────────────────────
   security.pam.services.sudo = {
-    text = ''
-      # pam_fprint_fixed: fingerprint first, then password fallback
-      auth  [success=2 default=ignore]  ${pamModulePath}  timeout=10
-      auth  [success=1 default=ignore]  pam_unix.so  nullok try_first_pass
-      auth  requisite                    pam_deny.so
-      auth  required                     pam_permit.so
+    # Disable the stock fprintd PAM integration
+    fprintAuth = false;
 
-      account required pam_unix.so
-      session required pam_limits.so
-      session required pam_unix.so
-    '';
+    # Insert our module before pam_unix with "sufficient" control:
+    #   - PAM_SUCCESS          → auth done (fingerprint matched)
+    #   - PAM_AUTHINFO_UNAVAIL → silently continue to pam_unix (password)
+    rules.auth.fprint_fixed = {
+      order = config.security.pam.services.sudo.rules.auth.unix.order - 10;
+      control = "sufficient";
+      modulePath = "${pam-fprint-fixed}/lib/security/pam_fprint_fixed.so";
+      settings = {
+        timeout = 10;
+      };
+    };
+  };
+
+  # ── polkit-1: same fingerprint-then-password flow ─────────────────
+  security.pam.services.polkit-1 = {
+    fprintAuth = false;
+
+    rules.auth.fprint_fixed = {
+      order = config.security.pam.services.polkit-1.rules.auth.unix.order - 10;
+      control = "sufficient";
+      modulePath = "${pam-fprint-fixed}/lib/security/pam_fprint_fixed.so";
+      settings = {
+        timeout = 10;
+      };
+    };
   };
 }
