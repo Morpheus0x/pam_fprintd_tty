@@ -5,10 +5,9 @@
  *   1. Check fprintd availability + enrolled prints via D-Bus
  *   2. If available: display prompt, start verification, poll() for
  *      fingerprint result or keypress
- *   3. On fingerprint match  → PAM_SUCCESS
- *   4. On Enter / timeout    → PAM_AUTHINFO_UNAVAIL  (fall through to pam_unix)
- *   5. On Ctrl+C             → PAM_ABORT  (cancel immediately via abort=die)
- *   6. If fprintd unavailable→ PAM_AUTHINFO_UNAVAIL  (immediate fall through)
+ *   3. On fingerprint match     → PAM_SUCCESS
+ *   4. On Enter / Ctrl+C / timeout → PAM_AUTHINFO_UNAVAIL  (fall through to pam_unix)
+ *   5. If fprintd unavailable     → PAM_AUTHINFO_UNAVAIL  (immediate fall through)
  *
  * Module arguments:
  *   timeout=N   seconds to wait for fingerprint (default 10)
@@ -19,8 +18,7 @@
  *   arrives as byte 0x03 rather than generating SIGINT.  This is necessary
  *   because sudo blocks SIGINT via sigprocmask() during PAM authentication,
  *   which would cause the keypress to silently vanish.  Instead, we detect
- *   the byte and return PAM_ABORT, which the PAM control "abort=die"
- *   translates into immediate stack termination.
+ *   it as a regular keypress and fall through to the password prompt.
  *
  * Safety:
  *   - Terminal settings are restored on every exit path, including
@@ -300,22 +298,15 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
             ssize_t nr = read(m.tty_fd, buf, sizeof(buf));
             if (nr > 0) {
                 /*
-                 * Check for Ctrl+C (0x03).  With ISIG disabled, Ctrl+C
-                 * is delivered as a regular byte rather than generating
-                 * SIGINT (which sudo blocks during PAM auth anyway).
-                 * Return PAM_ABORT so the PAM control "abort=die" can
-                 * terminate the auth stack immediately.
+                 * With ISIG disabled, Ctrl+C arrives as byte 0x03
+                 * rather than generating SIGINT (which sudo blocks
+                 * during PAM auth anyway).  We treat it the same as
+                 * Enter or any other key: fall through to password.
                  */
-                if (buf[0] == 0x03) {
-                    dbg(&m, "pam_fprintd_passwd: Ctrl+C detected, aborting");
-                    tty_write(&m, "\n");
-                    pam_result = PAM_ABORT;
-                    goto done;
-                }
 
                 /*
-                 * Any other keypress (Enter, typing password chars, etc.)
-                 * means the user wants password auth instead.
+                 * Any keypress (Enter, Ctrl+C, typing password chars,
+                 * etc.) means the user wants password auth instead.
                  */
                 dbg(&m, "pam_fprintd_passwd: keypress detected (%d byte(s)), "
                     "falling back to password", (int)nr);
@@ -383,9 +374,7 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
 
 done:
     dbg(&m, "pam_fprintd_passwd: returning %s",
-        pam_result == PAM_SUCCESS       ? "PAM_SUCCESS" :
-        pam_result == PAM_ABORT         ? "PAM_ABORT" :
-                                          "PAM_AUTHINFO_UNAVAIL");
+        pam_result == PAM_SUCCESS ? "PAM_SUCCESS" : "PAM_AUTHINFO_UNAVAIL");
     cleanup(&m);
     return pam_result;
 }

@@ -3,9 +3,8 @@
 # Authentication flow:
 #
 #   1. pam_fprintd_passwd.so  tries fingerprint with a 10 s timeout.
-#      - Fingerprint match  → auth succeeds (continue)
-#      - Enter key / timeout / no reader → ignored, try next
-#      - Ctrl+C             → abort (die), cancel the command
+#      - Fingerprint match            → auth succeeds (skip next 2 lines)
+#      - Enter / Ctrl+C / timeout / no reader → ignored, try next
 #
 #   2. pam_unix.so           prompts for password.
 #      - Correct password    → auth succeeds (skip next line)
@@ -19,12 +18,12 @@
 #   debug        log detailed diagnostics to syslog (journalctl -t sudo)
 #
 # To add debug logging, append "debug" to the first line:
-#   auth  [success=2 default=ignore abort=die]  pam_fprintd_passwd.so  timeout=10 debug
+#   auth  [success=2 default=ignore]  pam_fprintd_passwd.so  timeout=10 debug
 
-auth  [success=2 default=ignore abort=die]  pam_fprintd_passwd.so  timeout=10
-auth  [success=1 default=ignore]            pam_unix.so            nullok try_first_pass
-auth  requisite                              pam_deny.so
-auth  required                               pam_permit.so
+auth  [success=2 default=ignore]  pam_fprintd_passwd.so  timeout=10
+auth  [success=1 default=ignore]  pam_unix.so            nullok try_first_pass
+auth  requisite                    pam_deny.so
+auth  required                     pam_permit.so
 
 account  include  system-auth
 session  include  system-auth

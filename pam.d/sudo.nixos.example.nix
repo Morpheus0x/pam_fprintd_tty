@@ -31,13 +31,12 @@ in
     fprintAuth = false;
 
     # Insert our module before pam_unix with extended control:
-    #   - PAM_SUCCESS          → auth done (fingerprint matched)
-    #   - PAM_ABORT            → die (Ctrl+C pressed, cancel immediately)
+    #   - PAM_SUCCESS          → done (fingerprint matched, skip remaining)
     #   - PAM_AUTHINFO_UNAVAIL → ignore, continue to pam_unix (password)
     #   - default              → ignore, continue to pam_unix (password)
     rules.auth.fprintd_passwd = {
       order = config.security.pam.services.sudo.rules.auth.unix.order - 10;
-      control = "[success=ok default=ignore abort=die]";
+      control = "[success=done default=ignore]";
       modulePath = "${pam-fprintd-passwd}/lib/security/pam_fprintd_passwd.so";
       settings = {
         timeout = 10;
@@ -51,7 +50,7 @@ in
 
     rules.auth.fprintd_passwd = {
       order = config.security.pam.services.polkit-1.rules.auth.unix.order - 10;
-      control = "[success=ok default=ignore abort=die]";
+      control = "[success=done default=ignore]";
       modulePath = "${pam-fprintd-passwd}/lib/security/pam_fprintd_passwd.so";
       settings = {
         timeout = 10;
