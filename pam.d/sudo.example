@@ -3,8 +3,8 @@
 # Authentication flow:
 #
 #   1. pam_fprintd_passwd.so  tries fingerprint with a 10 s timeout.
-#      - Fingerprint match            → auth succeeds (skip next 2 lines)
-#      - Enter / Ctrl+C / timeout / no reader → ignored, try next
+#      - Fingerprint match                → auth succeeds (skip next 2 lines)
+#      - Ctrl+C / timeout / no reader     → ignored, try next
 #
 #   2. pam_unix.so           prompts for password.
 #      - Correct password    → auth succeeds (skip next line)

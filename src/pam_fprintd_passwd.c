@@ -5,9 +5,9 @@
  *   1. Check fprintd availability + enrolled prints via D-Bus
  *   2. If available: display prompt, start verification, poll() for
  *      fingerprint result or keypress
- *   3. On fingerprint match     → PAM_SUCCESS
- *   4. On Enter / Ctrl+C / timeout → PAM_AUTHINFO_UNAVAIL  (fall through to pam_unix)
- *   5. If fprintd unavailable     → PAM_AUTHINFO_UNAVAIL  (immediate fall through)
+ *   3. On fingerprint match      → PAM_SUCCESS
+ *   4. On Ctrl+C / timeout       → PAM_AUTHINFO_UNAVAIL  (fall through to pam_unix)
+ *   5. If fprintd unavailable    → PAM_AUTHINFO_UNAVAIL  (immediate fall through)
  *
  * Module arguments:
  *   timeout=N   seconds to wait for fingerprint (default 10)
@@ -18,7 +18,8 @@
  *   arrives as byte 0x03 rather than generating SIGINT.  This is necessary
  *   because sudo blocks SIGINT via sigprocmask() during PAM authentication,
  *   which would cause the keypress to silently vanish.  Instead, we detect
- *   it as a regular keypress and fall through to the password prompt.
+ *   it as a regular byte.  Only Ctrl+C (0x03) triggers password fallback;
+ *   all other keypresses are silently ignored.
  *
  * Safety:
  *   - Terminal settings are restored on every exit path, including
@@ -50,7 +51,7 @@
 /* ── Defaults ─────────────────────────────────────────────────────── */
 
 #define DEFAULT_TIMEOUT_SEC  10
-#define PROMPT_MSG           "Place your finger on the fingerprint reader (Enter for password)\n"
+#define PROMPT_MSG           "Place your finger on the fingerprint reader\n"
 
 /* ── Module-wide state (only valid for the duration of one call) ─── */
 
@@ -300,17 +301,21 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
                 /*
                  * With ISIG disabled, Ctrl+C arrives as byte 0x03
                  * rather than generating SIGINT (which sudo blocks
-                 * during PAM auth anyway).  We treat it the same as
-                 * Enter or any other key: fall through to password.
+                 * during PAM auth anyway).  Only Ctrl+C triggers
+                 * fallback to password; all other keypresses are
+                 * silently consumed so accidental input doesn't
+                 * interrupt the fingerprint scan.
                  */
+                if (buf[0] == 0x03) {
+                    dbg(&m, "pam_fprintd_passwd: Ctrl+C detected, "
+                        "falling back to password");
+                    tty_write(&m, "\n");
+                    break;
+                }
 
-                /*
-                 * Any keypress (Enter, Ctrl+C, typing password chars,
-                 * etc.) means the user wants password auth instead.
-                 */
-                dbg(&m, "pam_fprintd_passwd: keypress detected (%d byte(s)), "
-                    "falling back to password", (int)nr);
-                break;
+                /* Any other keypress: silently ignore */
+                dbg(&m, "pam_fprintd_passwd: ignoring keypress "
+                    "(%d byte(s))", (int)nr);
             }
         }
 
