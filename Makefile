@@ -1,4 +1,4 @@
-# pam_fprintd_passwd – Build a shared PAM module (.so)
+# pam_fprintd_tty – Build a shared PAM module (.so)
 #
 # Dependencies:
 #   - libpam development headers  (pam package)
@@ -6,7 +6,7 @@
 #   - pkg-config
 #
 # Usage:
-#   make            – build pam_fprintd_passwd.so
+#   make            – build pam_fprintd_tty.so
 #   make clean      – remove build artefacts
 #   make debug      – build with debug symbols, no optimisation
 #   make install    – install .so into DESTDIR/PAMDIR (needs root)
@@ -36,11 +36,11 @@ LIBS     := $(DBUS_LIBS) -lpam
 
 SRCDIR   := src
 BUILDDIR := build
-SRC      := $(SRCDIR)/pam_fprintd_passwd.c $(SRCDIR)/fprintd_dbus.c
+SRC      := $(SRCDIR)/pam_fprintd_tty.c $(SRCDIR)/fprintd_dbus.c
 OBJ      := $(patsubst $(SRCDIR)/%.c,$(BUILDDIR)/%.o,$(SRC))
 DEP      := $(OBJ:.o=.d)
-TARGET   := $(BUILDDIR)/pam_fprintd_passwd.so
-MODULE   := pam_fprintd_passwd.so
+TARGET   := $(BUILDDIR)/pam_fprintd_tty.so
+MODULE   := pam_fprintd_tty.so
 
 # Install paths
 DESTDIR  ?=

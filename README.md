@@ -1,4 +1,4 @@
-# pam_fprintd_passwd
+# pam_fprintd_tty
 
 A custom PAM module that provides seamless fingerprint-then-password authentication for `sudo` and other PAM-aware services on Linux. It communicates with the `fprintd` daemon over D-Bus and gracefully falls back to password authentication on timeout, Ctrl+C, or fingerprint mismatch.
 
@@ -27,7 +27,7 @@ A custom PAM module that provides seamless fingerprint-then-password authenticat
 nix-build
 ```
 
-The resulting `.so` is at `result/lib/security/pam_fprintd_passwd.so`.
+The resulting `.so` is at `result/lib/security/pam_fprintd_tty.so`.
 
 For development, enter a shell with all dependencies:
 
@@ -57,7 +57,7 @@ Import the provided NixOS module in your `configuration.nix`:
 
 ```nix
 imports = [
-  /path/to/pam-fprintd-passwd/pam.d/pam_sudo.nix
+  /path/to/pam-fprintd-tty/pam.d/pam_sudo.nix
 ];
 ```
 
@@ -65,7 +65,7 @@ For local development, use the dev variant instead:
 
 ```nix
 imports = [
-  /path/to/pam-fprintd-passwd/pam.d/dev_pam_sudo.nix
+  /path/to/pam-fprintd-tty/pam.d/dev_pam_sudo.nix
 ];
 ```
 
@@ -80,7 +80,7 @@ sudo nixos-rebuild switch
 After `make install`, edit `/etc/pam.d/sudo` (see `pam.d/sudo.example` for a complete example):
 
 ```
-auth  [success=2 default=ignore]  pam_fprintd_passwd.so  timeout=10
+auth  [success=2 default=ignore]  pam_fprintd_tty.so  timeout=10
 auth  [success=1 default=ignore]  pam_unix.so            nullok try_first_pass
 auth  requisite                    pam_deny.so
 auth  required                     pam_permit.so
@@ -99,14 +99,14 @@ session  include  system-auth
 Debug logs can be viewed with:
 
 ```bash
-journalctl --since "5 min ago" --grep pam_fprintd_passwd
+journalctl --since "5 min ago" --grep pam_fprintd_tty
 ```
 
 ## Project structure
 
 ```
 src/
-  pam_fprintd_passwd.c   Main PAM module (poll loop, terminal handling, retry logic)
+  pam_fprintd_tty.c      Main PAM module (poll loop, terminal handling, retry logic)
   fprintd_dbus.c         D-Bus helpers for fprintd communication
   fprintd_dbus.h         Header for D-Bus helpers
 pam.d/

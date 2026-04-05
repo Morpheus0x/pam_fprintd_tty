@@ -1,4 +1,4 @@
-# NixOS module: fingerprint + password authentication using pam_fprintd_passwd
+# NixOS module: fingerprint + password authentication using pam_fprintd_tty
 #
 # This fetches the module source from the upstream Git repository.
 # For local development, use sudo.nixos.dev.example.nix instead.
@@ -7,7 +7,7 @@
 #   In your configuration.nix (or wherever you manage imports):
 #
 #     imports = [
-#       /path/to/pam-fprintd-passwd/pam.d/sudo.nixos.example.nix
+#       /path/to/pam-fprintd-tty/pam.d/sudo.nixos.example.nix
 #     ];
 #
 #   Then:  sudo nixos-rebuild switch
@@ -15,9 +15,9 @@
 { config, pkgs, lib, ... }:
 
 let
-  pam-fprintd-passwd = pkgs.callPackage
+  pam-fprintd-tty = pkgs.callPackage
     ((builtins.fetchGit {
-      url = "https://git.example.com/myuser/pam-fprintd-passwd";
+      url = "https://git.example.com/myuser/pam-fprintd-tty";
       ref = "main";
     }) + "/package.nix") { };
 in
@@ -31,10 +31,10 @@ in
     #   - PAM_SUCCESS          → done (fingerprint matched, skip remaining)
     #   - PAM_AUTHINFO_UNAVAIL → ignore, continue to pam_unix (password)
     #   - default              → ignore, continue to pam_unix (password)
-    rules.auth.fprintd_passwd = {
+    rules.auth.fprintd_tty = {
       order = config.security.pam.services.sudo.rules.auth.unix.order - 10;
       control = "[success=done default=ignore]";
-      modulePath = "${pam-fprintd-passwd}/lib/security/pam_fprintd_passwd.so";
+      modulePath = "${pam-fprintd-tty}/lib/security/pam_fprintd_tty.so";
       settings = {
         timeout = 10;
       };
