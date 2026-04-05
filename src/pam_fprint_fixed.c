@@ -471,7 +471,8 @@ static void tty_write(module_ctx *m, const char *msg)
     if (m->tty_fd < 0)
         return;
     /* Best-effort write; ignore partial/failed writes. */
-    (void)write(m->tty_fd, msg, strlen(msg));
+    ssize_t ret = write(m->tty_fd, msg, strlen(msg));
+    (void)ret;
 }
 
 /* ── Cleanup ──────────────────────────────────────────────────────── */

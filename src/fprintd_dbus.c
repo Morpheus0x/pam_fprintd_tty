@@ -85,47 +85,6 @@ static int get_default_device(fprintd_ctx *ctx)
 }
 
 /*
- * claim_device – call Device.Claim(username).
- * We pass an empty string as the username so fprintd uses the caller's uid.
- * Returns 0 on success, -1 on failure.
- */
-static int claim_device(fprintd_ctx *ctx)
-{
-    DBusMessage *msg = dbus_message_new_method_call(
-        FPRINT_SERVICE,
-        ctx->device_path,
-        FPRINT_DEVICE_IFACE,
-        "Claim");
-    if (!msg)
-        return -1;
-
-    /* Empty string → fprintd resolves the calling user via uid */
-    const char *username = "";
-    dbus_message_append_args(msg,
-                             DBUS_TYPE_STRING, &username,
-                             DBUS_TYPE_INVALID);
-
-    DBusError err;
-    dbus_error_init(&err);
-
-    DBusMessage *reply = dbus_connection_send_with_reply_and_block(
-        ctx->conn, msg, DBUS_CALL_TIMEOUT, &err);
-    dbus_message_unref(msg);
-
-    if (!reply) {
-        syslog(LOG_AUTH | LOG_ERR,
-               "pam_fprint_fixed: Device.Claim failed: %s",
-               err.message);
-        dbus_error_free(&err);
-        return -1;
-    }
-
-    dbus_message_unref(reply);
-    ctx->claimed = true;
-    return 0;
-}
-
-/*
  * release_device – call Device.Release(). Safe to call if not claimed.
  */
 static void release_device(fprintd_ctx *ctx)
