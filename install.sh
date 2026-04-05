@@ -14,7 +14,7 @@ set -euo pipefail
 # ── Configuration ─────────────────────────────────────────────────────
 
 MODULE_NAME="pam_fprint_fixed.so"
-BUILD_SO="./${MODULE_NAME}"
+BUILD_SO="./build/${MODULE_NAME}"
 PAM_EXAMPLE="./pam.d/sudo.example"
 
 # Detect PAM module directory.

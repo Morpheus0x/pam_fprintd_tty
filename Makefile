@@ -28,10 +28,11 @@ LDFLAGS  := -shared -Wl,--no-undefined
 LIBS     := $(DBUS_LIBS) -lpam
 
 SRCDIR   := src
+BUILDDIR := build
 SRC      := $(SRCDIR)/pam_fprint_fixed.c $(SRCDIR)/fprintd_dbus.c
-OBJ      := $(SRC:.c=.o)
-DEP      := $(SRC:.c=.d)
-TARGET   := pam_fprint_fixed.so
+OBJ      := $(patsubst $(SRCDIR)/%.c,$(BUILDDIR)/%.o,$(SRC))
+DEP      := $(OBJ:.o=.d)
+TARGET   := $(BUILDDIR)/pam_fprint_fixed.so
 
 # ── Targets ───────────────────────────────────────────────────────────
 
@@ -45,11 +46,14 @@ debug: $(TARGET)
 $(TARGET): $(OBJ)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
 
-$(SRCDIR)/%.o: $(SRCDIR)/%.c
+$(BUILDDIR)/%.o: $(SRCDIR)/%.c | $(BUILDDIR)
 	$(CC) $(CFLAGS) $(OPT) -MMD -MP -c -o $@ $<
 
+$(BUILDDIR):
+	mkdir -p $(BUILDDIR)
+
 clean:
-	rm -f $(OBJ) $(DEP) $(TARGET)
+	rm -rf $(BUILDDIR)
 
 install: $(TARGET)
 	@./install.sh

@@ -1,0 +1,13 @@
+# Build output
+build/
+
+# Nix build result symlink
+result
+result-*
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

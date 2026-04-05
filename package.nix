@@ -21,7 +21,7 @@ stdenv.mkDerivation {
   installPhase = ''
     runHook preInstall
     mkdir -p $out/lib/security
-    install -m 0755 pam_fprint_fixed.so $out/lib/security/
+    install -m 0755 build/pam_fprint_fixed.so $out/lib/security/
     runHook postInstall
   '';
 
