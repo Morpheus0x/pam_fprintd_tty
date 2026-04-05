@@ -7,7 +7,7 @@
 }:
 
 stdenv.mkDerivation {
-  pname = "pam-fprint-fixed";
+  pname = "pam-fprintd-passwd";
   version = "0.1.0";
 
   src = lib.cleanSource ./.;
@@ -21,12 +21,13 @@ stdenv.mkDerivation {
   installPhase = ''
     runHook preInstall
     mkdir -p $out/lib/security
-    install -m 0755 build/pam_fprint_fixed.so $out/lib/security/
+    install -m 0755 build/pam_fprintd_passwd.so $out/lib/security/
     runHook postInstall
   '';
 
   meta = with lib; {
-    description = "PAM module for sequential fingerprint-then-password authentication";
+    description = "PAM module for seamless fingerprint-then-password authentication via fprintd";
+    homepage = "https://git.example.com/myuser/pam-fprintd-passwd";
     license = licenses.mit;
     platforms = platforms.linux;
   };

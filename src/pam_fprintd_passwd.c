@@ -1,5 +1,5 @@
 /*
- * pam_fprint_fixed.c – PAM module for sequential fingerprint-then-password auth
+ * pam_fprintd_passwd.c – PAM module for sequential fingerprint-then-password auth
  *
  * Flow:
  *   1. Check fprintd availability + enrolled prints via D-Bus
@@ -161,7 +161,7 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
 
     parse_args(&m, argc, argv);
 
-    dbg(&m, "pam_fprint_fixed: module loaded (timeout=%d, debug=%d)",
+    dbg(&m, "pam_fprintd_passwd: module loaded (timeout=%d, debug=%d)",
         m.timeout_sec, m.debug);
 
     /* ── 1. Get the username from PAM ─────────────────────────────── */
@@ -169,16 +169,16 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
     const char *username = NULL;
     int rc = pam_get_user(pamh, &username, NULL);
     if (rc != PAM_SUCCESS || !username || !*username) {
-        log_err("pam_fprint_fixed: could not determine username (rc=%d)", rc);
+        log_err("pam_fprintd_passwd: could not determine username (rc=%d)", rc);
         return PAM_AUTHINFO_UNAVAIL;
     }
 
-    dbg(&m, "pam_fprint_fixed: authenticating user '%s'", username);
+    dbg(&m, "pam_fprintd_passwd: authenticating user '%s'", username);
 
     /* ── 2. Connect to fprintd ────────────────────────────────────── */
 
     if (fprintd_open(&m.fp) < 0) {
-        dbg(&m, "pam_fprint_fixed: fprintd not available, skipping");
+        dbg(&m, "pam_fprintd_passwd: fprintd not available, skipping");
         return PAM_AUTHINFO_UNAVAIL;
     }
 
@@ -186,18 +186,18 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
 
     int enrolled = fprintd_has_enrolled_prints(&m.fp, username);
     if (enrolled <= 0) {
-        dbg(&m, "pam_fprint_fixed: no enrolled prints for '%s' (rc=%d)",
+        dbg(&m, "pam_fprintd_passwd: no enrolled prints for '%s' (rc=%d)",
             username, enrolled);
         cleanup(&m);
         return PAM_AUTHINFO_UNAVAIL;
     }
 
-    dbg(&m, "pam_fprint_fixed: user '%s' has enrolled prints", username);
+    dbg(&m, "pam_fprintd_passwd: user '%s' has enrolled prints", username);
 
     /* ── 4. Open terminal for keypress detection ──────────────────── */
 
     if (tty_open_raw(&m) < 0) {
-        log_err("pam_fprint_fixed: cannot open /dev/tty, skipping");
+        log_err("pam_fprintd_passwd: cannot open /dev/tty, skipping");
         cleanup(&m);
         return PAM_AUTHINFO_UNAVAIL;
     }
@@ -218,7 +218,7 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
     /* ── 5. Start fingerprint verification ────────────────────────── */
 
     if (fprintd_verify_start(&m.fp, username) < 0) {
-        log_err("pam_fprint_fixed: VerifyStart failed for '%s'", username);
+        log_err("pam_fprintd_passwd: VerifyStart failed for '%s'", username);
         cleanup(&m);
         return PAM_AUTHINFO_UNAVAIL;
     }
@@ -231,7 +231,7 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
 
     int dbus_fd = fprintd_get_fd(&m.fp);
     if (dbus_fd < 0) {
-        log_err("pam_fprint_fixed: cannot get D-Bus fd");
+        log_err("pam_fprintd_passwd: cannot get D-Bus fd");
         cleanup(&m);
         return PAM_AUTHINFO_UNAVAIL;
     }
@@ -249,7 +249,7 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
     struct timespec t_start, t_now;
     clock_gettime(CLOCK_MONOTONIC, &t_start);
 
-    dbg(&m, "pam_fprint_fixed: entering poll loop (tty_fd=%d, dbus_fd=%d, "
+    dbg(&m, "pam_fprintd_passwd: entering poll loop (tty_fd=%d, dbus_fd=%d, "
         "timeout=%dms)", m.tty_fd, dbus_fd, timeout_ms);
 
     for (;;) {
@@ -266,21 +266,21 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
                  * returned (SA_RESTART wasn't set and the handler didn't
                  * terminate us).  Fall through to password.
                  */
-                dbg(&m, "pam_fprint_fixed: interrupted by signal, "
+                dbg(&m, "pam_fprintd_passwd: interrupted by signal, "
                     "falling back to password");
                 tty_write(&m, "\n");
                 break;
             }
             /* Unexpected poll error */
-            log_err("pam_fprint_fixed: poll error: %s", strerror(errno));
+            log_err("pam_fprintd_passwd: poll error: %s", strerror(errno));
             break;
         }
 
         if (n == 0) {
             /* Timeout – fall through to password */
-            dbg(&m, "pam_fprint_fixed: timeout reached (%ds)",
+            dbg(&m, "pam_fprintd_passwd: timeout reached (%ds)",
                 m.timeout_sec);
-            tty_write(&m, "\npam_fprint_fixed: fingerprint timeout, "
+            tty_write(&m, "\npam_fprintd_passwd: fingerprint timeout, "
                           "falling back to password\n");
             break;
         }
@@ -297,7 +297,7 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
                  * key avoids confusion if someone starts typing their
                  * password immediately.
                  */
-                dbg(&m, "pam_fprint_fixed: keypress detected (%d byte(s)), "
+                dbg(&m, "pam_fprintd_passwd: keypress detected (%d byte(s)), "
                     "falling back to password", (int)nr);
                 break;
             }
@@ -305,7 +305,7 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
 
         if (fds[0].revents & (POLLHUP | POLLERR)) {
             /* Terminal gone – bail out */
-            dbg(&m, "pam_fprint_fixed: tty hangup/error (revents=0x%x)",
+            dbg(&m, "pam_fprintd_passwd: tty hangup/error (revents=0x%x)",
                 (unsigned)fds[0].revents);
             break;
         }
@@ -317,31 +317,31 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
 
             switch (fp_rc) {
             case FP_RESULT_MATCH:
-                dbg(&m, "pam_fprint_fixed: fingerprint matched!");
+                dbg(&m, "pam_fprintd_passwd: fingerprint matched!");
                 tty_write(&m, "\n");
                 pam_result = PAM_SUCCESS;
                 goto done;
 
             case FP_RESULT_NO_MATCH:
-                dbg(&m, "pam_fprint_fixed: fingerprint did not match");
+                dbg(&m, "pam_fprintd_passwd: fingerprint did not match");
                 tty_write(&m, "Fingerprint did not match.\n");
                 /* Fall through to password */
                 goto done;
 
             case FP_RESULT_ERROR:
-                dbg(&m, "pam_fprint_fixed: fprintd reported an error");
-                tty_write(&m, "pam_fprint_fixed: fingerprint reader error\n");
+                dbg(&m, "pam_fprintd_passwd: fprintd reported an error");
+                tty_write(&m, "pam_fprintd_passwd: fingerprint reader error\n");
                 goto done;
 
             case FP_RESULT_PENDING:
                 /* Retry events (swipe-too-short, etc.) – keep waiting */
-                dbg(&m, "pam_fprint_fixed: fprintd pending (retry event)");
+                dbg(&m, "pam_fprintd_passwd: fprintd pending (retry event)");
                 break;
             }
         }
 
         if (fds[1].revents & (POLLHUP | POLLERR)) {
-            dbg(&m, "pam_fprint_fixed: D-Bus fd hangup/error (revents=0x%x)",
+            dbg(&m, "pam_fprintd_passwd: D-Bus fd hangup/error (revents=0x%x)",
                 (unsigned)fds[1].revents);
             break;
         }
@@ -353,16 +353,16 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
                         + (t_now.tv_nsec - t_start.tv_nsec) / 1000000L;
         remaining = timeout_ms - (int)elapsed_ms;
         if (remaining <= 0) {
-            dbg(&m, "pam_fprint_fixed: timeout (elapsed after %ldms)",
+            dbg(&m, "pam_fprintd_passwd: timeout (elapsed after %ldms)",
                 elapsed_ms);
-            tty_write(&m, "\npam_fprint_fixed: fingerprint timeout, "
+            tty_write(&m, "\npam_fprintd_passwd: fingerprint timeout, "
                           "falling back to password\n");
             break;
         }
     }
 
 done:
-    dbg(&m, "pam_fprint_fixed: returning %s",
+    dbg(&m, "pam_fprintd_passwd: returning %s",
         pam_result == PAM_SUCCESS ? "PAM_SUCCESS" : "PAM_AUTHINFO_UNAVAIL");
     cleanup(&m);
     return pam_result;
@@ -407,13 +407,13 @@ static int tty_open_raw(module_ctx *m)
 {
     m->tty_fd = open("/dev/tty", O_RDWR | O_NOCTTY);
     if (m->tty_fd < 0) {
-        log_err("pam_fprint_fixed: open(/dev/tty): %s", strerror(errno));
+        log_err("pam_fprintd_passwd: open(/dev/tty): %s", strerror(errno));
         return -1;
     }
 
     /* Save the current terminal settings so we can restore them later */
     if (tcgetattr(m->tty_fd, &m->orig_tio) < 0) {
-        log_err("pam_fprint_fixed: tcgetattr: %s", strerror(errno));
+        log_err("pam_fprintd_passwd: tcgetattr: %s", strerror(errno));
         close(m->tty_fd);
         m->tty_fd = -1;
         return -1;
@@ -434,7 +434,7 @@ static int tty_open_raw(module_ctx *m)
     raw.c_cc[VTIME] = 0;
 
     if (tcsetattr(m->tty_fd, TCSANOW, &raw) < 0) {
-        log_err("pam_fprint_fixed: tcsetattr: %s", strerror(errno));
+        log_err("pam_fprintd_passwd: tcsetattr: %s", strerror(errno));
         close(m->tty_fd);
         m->tty_fd = -1;
         m->tio_saved = 0;

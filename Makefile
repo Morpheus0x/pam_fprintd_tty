@@ -1,4 +1,4 @@
-# pam_fprint_fixed – Build a shared PAM module (.so)
+# pam_fprintd_passwd – Build a shared PAM module (.so)
 #
 # Dependencies:
 #   - libpam development headers  (pam package)
@@ -6,7 +6,7 @@
 #   - pkg-config
 #
 # Usage:
-#   make            – build pam_fprint_fixed.so
+#   make            – build pam_fprintd_passwd.so
 #   make clean      – remove build artefacts
 #   make debug      – build with debug symbols, no optimisation
 #   make install    – install .so + config (runs install.sh, needs root)
@@ -29,10 +29,10 @@ LIBS     := $(DBUS_LIBS) -lpam
 
 SRCDIR   := src
 BUILDDIR := build
-SRC      := $(SRCDIR)/pam_fprint_fixed.c $(SRCDIR)/fprintd_dbus.c
+SRC      := $(SRCDIR)/pam_fprintd_passwd.c $(SRCDIR)/fprintd_dbus.c
 OBJ      := $(patsubst $(SRCDIR)/%.c,$(BUILDDIR)/%.o,$(SRC))
 DEP      := $(OBJ:.o=.d)
-TARGET   := $(BUILDDIR)/pam_fprint_fixed.so
+TARGET   := $(BUILDDIR)/pam_fprintd_passwd.so
 
 # ── Targets ───────────────────────────────────────────────────────────
 

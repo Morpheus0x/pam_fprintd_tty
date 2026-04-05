@@ -41,7 +41,7 @@ static int get_default_device(fprintd_ctx *ctx)
         "GetDefaultDevice");
     if (!msg) {
         syslog(LOG_AUTH | LOG_ERR,
-               "pam_fprint_fixed: failed to create GetDefaultDevice message");
+               "pam_fprintd_passwd: failed to create GetDefaultDevice message");
         return -1;
     }
 
@@ -54,7 +54,7 @@ static int get_default_device(fprintd_ctx *ctx)
 
     if (!reply) {
         syslog(LOG_AUTH | LOG_ERR,
-               "pam_fprint_fixed: GetDefaultDevice failed: %s",
+               "pam_fprintd_passwd: GetDefaultDevice failed: %s",
                err.message);
         dbus_error_free(&err);
         return -1;
@@ -65,7 +65,7 @@ static int get_default_device(fprintd_ctx *ctx)
                                DBUS_TYPE_OBJECT_PATH, &path,
                                DBUS_TYPE_INVALID)) {
         syslog(LOG_AUTH | LOG_ERR,
-               "pam_fprint_fixed: GetDefaultDevice bad reply: %s",
+               "pam_fprintd_passwd: GetDefaultDevice bad reply: %s",
                err.message);
         dbus_error_free(&err);
         dbus_message_unref(reply);
@@ -77,7 +77,7 @@ static int get_default_device(fprintd_ctx *ctx)
 
     if (!ctx->device_path) {
         syslog(LOG_AUTH | LOG_ERR,
-               "pam_fprint_fixed: strdup failed for device path");
+               "pam_fprintd_passwd: strdup failed for device path");
         return -1;
     }
 
@@ -138,7 +138,7 @@ static void add_verify_signal_match(fprintd_ctx *ctx)
     dbus_bus_add_match(ctx->conn, rule, &err);
     if (dbus_error_is_set(&err)) {
         syslog(LOG_AUTH | LOG_WARNING,
-               "pam_fprint_fixed: add_match failed: %s", err.message);
+               "pam_fprintd_passwd: add_match failed: %s", err.message);
         dbus_error_free(&err);
     }
 
@@ -184,7 +184,7 @@ int fprintd_open(fprintd_ctx *ctx)
     ctx->conn = dbus_bus_get(DBUS_BUS_SYSTEM, &err);
     if (!ctx->conn) {
         syslog(LOG_AUTH | LOG_ERR,
-               "pam_fprint_fixed: cannot connect to system bus: %s",
+               "pam_fprintd_passwd: cannot connect to system bus: %s",
                err.message);
         dbus_error_free(&err);
         return -1;
@@ -240,7 +240,7 @@ int fprintd_has_enrolled_prints(fprintd_ctx *ctx, const char *username)
             return 0;
         }
         syslog(LOG_AUTH | LOG_ERR,
-               "pam_fprint_fixed: ListEnrolledFingers failed: %s",
+               "pam_fprintd_passwd: ListEnrolledFingers failed: %s",
                err.message);
         dbus_error_free(&err);
         return -1;
@@ -292,7 +292,7 @@ int fprintd_verify_start(fprintd_ctx *ctx, const char *username)
 
         if (!reply) {
             syslog(LOG_AUTH | LOG_ERR,
-                   "pam_fprint_fixed: Claim(%s) failed: %s",
+                   "pam_fprintd_passwd: Claim(%s) failed: %s",
                    username, err.message);
             dbus_error_free(&err);
             return -1;
@@ -329,7 +329,7 @@ int fprintd_verify_start(fprintd_ctx *ctx, const char *username)
 
     if (!reply) {
         syslog(LOG_AUTH | LOG_ERR,
-               "pam_fprint_fixed: VerifyStart failed: %s",
+               "pam_fprintd_passwd: VerifyStart failed: %s",
                err.message);
         dbus_error_free(&err);
         remove_verify_signal_match(ctx);
@@ -431,7 +431,7 @@ fp_result_t fprintd_poll_result(fprintd_ctx *ctx)
                                       DBUS_TYPE_INVALID)) {
 
                 syslog(LOG_AUTH | LOG_DEBUG,
-                       "pam_fprint_fixed: VerifyStatus: %s (done=%d)",
+                       "pam_fprintd_passwd: VerifyStatus: %s (done=%d)",
                        status, (int)done);
 
                 if (strcmp(status, "verify-match") == 0) {

@@ -1,14 +1,14 @@
-# NixOS module: fingerprint + password authentication using pam_fprint_fixed
+# NixOS module: fingerprint + password authentication using pam_fprintd_passwd
 #
 # This replaces the standard pam_fprintd integration with our custom module
 # that provides a smoother UX: shows a prompt, accepts fingerprint OR
-# Enter-key / timeout to fall back to password.
+# Enter-key / timeout to fall back to password.  Ctrl+C aborts immediately.
 #
 # Usage:
 #   In your configuration.nix (or wherever you manage imports):
 #
 #     imports = [
-#       /path/to/pam_fprint_fixed/pam.d/sudo.nixos.example.nix
+#       /path/to/pam-fprintd-passwd/pam.d/sudo.nixos.example.nix
 #     ];
 #
 #   Then:  sudo nixos-rebuild switch
@@ -17,7 +17,7 @@
 
 let
   # Build the PAM module from the project source
-  pam-fprint-fixed = pkgs.callPackage ../package.nix { };
+  pam-fprintd-passwd = pkgs.callPackage ../package.nix { };
 in
 {
   # ── fprintd daemon + driver ───────────────────────────────────────
@@ -30,13 +30,15 @@ in
     # Disable the stock fprintd PAM integration
     fprintAuth = false;
 
-    # Insert our module before pam_unix with "sufficient" control:
+    # Insert our module before pam_unix with extended control:
     #   - PAM_SUCCESS          → auth done (fingerprint matched)
-    #   - PAM_AUTHINFO_UNAVAIL → silently continue to pam_unix (password)
-    rules.auth.fprint_fixed = {
+    #   - PAM_ABORT            → die (Ctrl+C pressed, cancel immediately)
+    #   - PAM_AUTHINFO_UNAVAIL → ignore, continue to pam_unix (password)
+    #   - default              → ignore, continue to pam_unix (password)
+    rules.auth.fprintd_passwd = {
       order = config.security.pam.services.sudo.rules.auth.unix.order - 10;
-      control = "sufficient";
-      modulePath = "${pam-fprint-fixed}/lib/security/pam_fprint_fixed.so";
+      control = "[success=ok default=ignore abort=die]";
+      modulePath = "${pam-fprintd-passwd}/lib/security/pam_fprintd_passwd.so";
       settings = {
         timeout = 10;
       };
@@ -47,10 +49,10 @@ in
   security.pam.services.polkit-1 = {
     fprintAuth = false;
 
-    rules.auth.fprint_fixed = {
+    rules.auth.fprintd_passwd = {
       order = config.security.pam.services.polkit-1.rules.auth.unix.order - 10;
-      control = "sufficient";
-      modulePath = "${pam-fprint-fixed}/lib/security/pam_fprint_fixed.so";
+      control = "[success=ok default=ignore abort=die]";
+      modulePath = "${pam-fprintd-passwd}/lib/security/pam_fprintd_passwd.so";
       settings = {
         timeout = 10;
       };
