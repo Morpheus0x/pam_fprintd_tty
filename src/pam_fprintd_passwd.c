@@ -6,8 +6,10 @@
  *   2. If available: display prompt, start verification, poll() for
  *      fingerprint result or keypress
  *   3. On fingerprint match      → PAM_SUCCESS
- *   4. On Ctrl+C / timeout       → PAM_AUTHINFO_UNAVAIL  (fall through to pam_unix)
- *   5. If fprintd unavailable    → PAM_AUTHINFO_UNAVAIL  (immediate fall through)
+ *   4. On fingerprint mismatch  → silent retry (up to MAX_FP_ATTEMPTS times,
+ *                                  with RETRY_DELAY_MS grace period between each)
+ *   5. On Ctrl+C / timeout / max attempts → PAM_AUTHINFO_UNAVAIL  (fall through)
+ *   6. If fprintd unavailable   → PAM_AUTHINFO_UNAVAIL  (immediate fall through)
  *
  * Module arguments:
  *   timeout=N   seconds to wait for fingerprint (default 10)
@@ -51,6 +53,8 @@
 /* ── Defaults ─────────────────────────────────────────────────────── */
 
 #define DEFAULT_TIMEOUT_SEC  10
+#define MAX_FP_ATTEMPTS      3       /* max fingerprint tries before password */
+#define RETRY_DELAY_MS       500     /* grace period between attempts (ms)   */
 #define PROMPT_MSG           "Place your finger on the fingerprint reader\n"
 
 /* ── Module-wide state (only valid for the duration of one call) ─── */
@@ -253,6 +257,7 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
     int pam_result = PAM_AUTHINFO_UNAVAIL;   /* default: fall through */
     int timeout_ms = m.timeout_sec * 1000;
     int remaining  = timeout_ms;
+    int attempt    = 1;                     /* current fingerprint attempt */
 
     struct timespec t_start, t_now;
     clock_gettime(CLOCK_MONOTONIC, &t_start);
@@ -308,7 +313,6 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
                 if (buf[0] == 0x03) {
                     dbg(&m, "pam_fprintd_passwd: Ctrl+C detected, "
                         "falling back to password");
-                    tty_write(&m, "\n");
                     break;
                 }
 
@@ -337,10 +341,45 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
                 goto done;
 
             case FP_RESULT_NO_MATCH:
-                dbg(&m, "pam_fprintd_passwd: fingerprint did not match");
-                tty_write(&m, "Fingerprint did not match.\n");
-                /* Fall through to password */
-                goto done;
+                dbg(&m, "pam_fprintd_passwd: fingerprint did not match "
+                    "(attempt %d/%d)", attempt, MAX_FP_ATTEMPTS);
+
+                tty_write(&m, "Failed to match fingerprint\n");
+
+                if (attempt >= MAX_FP_ATTEMPTS) {
+                    dbg(&m, "pam_fprintd_passwd: max attempts reached, "
+                        "falling back to password");
+                    goto done;
+                }
+
+                /*
+                 * Retry: stop current verify, sleep briefly to avoid
+                 * rapid-fire failures, then restart verification.
+                 */
+                attempt++;
+                fprintd_verify_stop(&m.fp);
+
+                {
+                    struct timespec delay = {
+                        .tv_sec  = RETRY_DELAY_MS / 1000,
+                        .tv_nsec = (RETRY_DELAY_MS % 1000) * 1000000L
+                    };
+                    nanosleep(&delay, NULL);
+                }
+
+                if (fprintd_verify_start(&m.fp, username) < 0) {
+                    log_err("pam_fprintd_passwd: VerifyStart retry failed");
+                    goto done;
+                }
+
+                /* Reset timeout for the new attempt */
+                clock_gettime(CLOCK_MONOTONIC, &t_start);
+                remaining = timeout_ms;
+
+                tty_write(&m, PROMPT_MSG);
+                dbg(&m, "pam_fprintd_passwd: retrying (attempt %d/%d)",
+                    attempt, MAX_FP_ATTEMPTS);
+                break;
 
             case FP_RESULT_ERROR:
                 dbg(&m, "pam_fprintd_passwd: fprintd reported an error");
