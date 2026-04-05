@@ -1,21 +1,30 @@
 /*
- * pam_fprintd_passwd.c – PAM module for sequential fingerprint-then-password auth
+ * pam_fprintd_passwd.c – PAM module for seamless fingerprint-then-password auth
  *
  * Flow:
  *   1. Check fprintd availability + enrolled prints via D-Bus
  *   2. If available: display prompt, start verification, poll() for
- *      fingerprint result or Enter key press
+ *      fingerprint result or keypress
  *   3. On fingerprint match  → PAM_SUCCESS
  *   4. On Enter / timeout    → PAM_AUTHINFO_UNAVAIL  (fall through to pam_unix)
- *   5. If fprintd unavailable→ PAM_AUTHINFO_UNAVAIL  (immediate fall through)
+ *   5. On Ctrl+C             → PAM_ABORT  (cancel immediately via abort=die)
+ *   6. If fprintd unavailable→ PAM_AUTHINFO_UNAVAIL  (immediate fall through)
  *
  * Module arguments:
  *   timeout=N   seconds to wait for fingerprint (default 10)
  *   debug       enable syslog debug messages
  *
+ * Ctrl+C handling:
+ *   The terminal is placed in raw mode with ISIG disabled so that Ctrl+C
+ *   arrives as byte 0x03 rather than generating SIGINT.  This is necessary
+ *   because sudo blocks SIGINT via sigprocmask() during PAM authentication,
+ *   which would cause the keypress to silently vanish.  Instead, we detect
+ *   the byte and return PAM_ABORT, which the PAM control "abort=die"
+ *   translates into immediate stack termination.
+ *
  * Safety:
  *   - Terminal settings are restored on every exit path, including
- *     signal delivery (SIGINT, SIGTERM, SIGHUP).
+ *     signal delivery (SIGTERM, SIGHUP).
  *   - Original signal handlers are saved and reinstated on cleanup.
  *   - Stale terminal input is flushed before the poll loop starts.
  */
@@ -43,7 +52,7 @@
 /* ── Defaults ─────────────────────────────────────────────────────── */
 
 #define DEFAULT_TIMEOUT_SEC  10
-#define PROMPT_MSG           "Swipe finger on reader or press Enter for password:\n"
+#define PROMPT_MSG           "Place your finger on the fingerprint reader (Enter for password)\n"
 
 /* ── Module-wide state (only valid for the duration of one call) ─── */
 
@@ -258,13 +267,12 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
         if (n < 0) {
             if (errno == EINTR) {
                 /*
-                 * Signal received (e.g. Ctrl+C → SIGINT).
+                 * Signal received (e.g. SIGTERM, SIGHUP).
+                 * Our signal handler already restored the terminal.
+                 * Fall through to password as a safe default.
                  *
-                 * Our signal handler already restored the terminal and
-                 * re-raised the signal with the original handler.  If
-                 * we're still alive, the original handler must have
-                 * returned (SA_RESTART wasn't set and the handler didn't
-                 * terminate us).  Fall through to password.
+                 * Note: Ctrl+C is handled as byte 0x03 (ISIG is off),
+                 * not via SIGINT, so it doesn't come through here.
                  */
                 dbg(&m, "pam_fprintd_passwd: interrupted by signal, "
                     "falling back to password");
@@ -292,10 +300,22 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
             ssize_t nr = read(m.tty_fd, buf, sizeof(buf));
             if (nr > 0) {
                 /*
-                 * Any keypress means the user wants to type a password.
-                 * We specifically document Enter, but reacting to any
-                 * key avoids confusion if someone starts typing their
-                 * password immediately.
+                 * Check for Ctrl+C (0x03).  With ISIG disabled, Ctrl+C
+                 * is delivered as a regular byte rather than generating
+                 * SIGINT (which sudo blocks during PAM auth anyway).
+                 * Return PAM_ABORT so the PAM control "abort=die" can
+                 * terminate the auth stack immediately.
+                 */
+                if (buf[0] == 0x03) {
+                    dbg(&m, "pam_fprintd_passwd: Ctrl+C detected, aborting");
+                    tty_write(&m, "\n");
+                    pam_result = PAM_ABORT;
+                    goto done;
+                }
+
+                /*
+                 * Any other keypress (Enter, typing password chars, etc.)
+                 * means the user wants password auth instead.
                  */
                 dbg(&m, "pam_fprintd_passwd: keypress detected (%d byte(s)), "
                     "falling back to password", (int)nr);
@@ -363,7 +383,9 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
 
 done:
     dbg(&m, "pam_fprintd_passwd: returning %s",
-        pam_result == PAM_SUCCESS ? "PAM_SUCCESS" : "PAM_AUTHINFO_UNAVAIL");
+        pam_result == PAM_SUCCESS       ? "PAM_SUCCESS" :
+        pam_result == PAM_ABORT         ? "PAM_ABORT" :
+                                          "PAM_AUTHINFO_UNAVAIL");
     cleanup(&m);
     return pam_result;
 }
@@ -424,12 +446,14 @@ static int tty_open_raw(module_ctx *m)
      * Switch to raw-ish mode:
      *   - ICANON off  → don't wait for newline, deliver bytes immediately
      *   - ECHO   off  → don't echo keypresses (we're not collecting a password)
-     *   - ISIG   on   → still deliver SIGINT on Ctrl+C so poll() gets EINTR
+     *   - ISIG   off  → Ctrl+C arrives as byte 0x03 in the input buffer
+     *                    instead of generating SIGINT (which sudo blocks
+     *                    via sigprocmask during PAM authentication, making
+     *                    the keypress silently vanish)
      *   - VMIN=1, VTIME=0 → read blocks until 1 byte (but we use poll)
      */
     struct termios raw = m->orig_tio;
-    raw.c_lflag &= ~((tcflag_t)ICANON | (tcflag_t)ECHO);
-    /* Keep ISIG so Ctrl+C still works */
+    raw.c_lflag &= ~((tcflag_t)ICANON | (tcflag_t)ECHO | (tcflag_t)ISIG);
     raw.c_cc[VMIN]  = 1;
     raw.c_cc[VTIME] = 0;
 
