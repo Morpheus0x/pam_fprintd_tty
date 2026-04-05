@@ -9,7 +9,14 @@
 #   make            – build pam_fprintd_passwd.so
 #   make clean      – remove build artefacts
 #   make debug      – build with debug symbols, no optimisation
-#   make install    – install .so + config (runs install.sh, needs root)
+#   make install    – install .so into DESTDIR/PAMDIR (needs root)
+#   make uninstall  – remove installed .so
+#
+# Install variables (override as needed):
+#   DESTDIR         – staging prefix for packaging (default: empty)
+#   PAMDIR          – PAM module directory (auto-detected, or override)
+#
+# On NixOS, use `nix-build` instead of `make install`.
 
 CC       ?= gcc
 
@@ -33,10 +40,27 @@ SRC      := $(SRCDIR)/pam_fprintd_passwd.c $(SRCDIR)/fprintd_dbus.c
 OBJ      := $(patsubst $(SRCDIR)/%.c,$(BUILDDIR)/%.o,$(SRC))
 DEP      := $(OBJ:.o=.d)
 TARGET   := $(BUILDDIR)/pam_fprintd_passwd.so
+MODULE   := pam_fprintd_passwd.so
+
+# Install paths
+DESTDIR  ?=
+
+# Auto-detect PAM module directory unless overridden.
+# Distro-specific paths (checked in order):
+#   Debian/Ubuntu  /lib/x86_64-linux-gnu/security
+#   Arch/Fedora    /usr/lib/security
+#   Fedora 64-bit  /usr/lib64/security
+#   Generic        /lib/security
+PAMDIR   ?= $(shell \
+  if   [ -d /lib/x86_64-linux-gnu/security ]; then echo /lib/x86_64-linux-gnu/security; \
+  elif [ -d /usr/lib64/security ];            then echo /usr/lib64/security; \
+  elif [ -d /usr/lib/security ];              then echo /usr/lib/security; \
+  else                                             echo /lib/security; \
+  fi)
 
 # ── Targets ───────────────────────────────────────────────────────────
 
-.PHONY: all clean debug install
+.PHONY: all clean debug install uninstall
 
 all: $(TARGET)
 
@@ -56,7 +80,32 @@ clean:
 	rm -rf $(BUILDDIR)
 
 install: $(TARGET)
-	@./install.sh
+	@if [ -f /etc/NIXOS ] || [ -d /run/current-system/sw ]; then \
+		echo ""; \
+		echo "ERROR: NixOS detected – 'make install' is not supported on NixOS."; \
+		echo ""; \
+		echo "Instead, use the NixOS module:"; \
+		echo "  1. Add pam.d/sudo.nixos.example.nix to your configuration imports"; \
+		echo "  2. Run: sudo nixos-rebuild switch"; \
+		echo ""; \
+		echo "Or build with Nix directly:"; \
+		echo "  nix-build"; \
+		echo ""; \
+		exit 1; \
+	fi
+	install -d $(DESTDIR)$(PAMDIR)
+	install -m 0755 $(TARGET) $(DESTDIR)$(PAMDIR)/$(MODULE)
+	@echo ""
+	@echo "Installed $(MODULE) to $(DESTDIR)$(PAMDIR)/$(MODULE)"
+	@echo "Configure PAM by editing /etc/pam.d/sudo (see pam.d/sudo.example)"
+
+uninstall:
+	@if [ -f /etc/NIXOS ] || [ -d /run/current-system/sw ]; then \
+		echo "ERROR: NixOS detected – manual uninstall not supported. Remove from configuration.nix instead."; \
+		exit 1; \
+	fi
+	rm -f $(DESTDIR)$(PAMDIR)/$(MODULE)
+	@echo "Removed $(DESTDIR)$(PAMDIR)/$(MODULE)"
 
 # Auto-generated header dependency tracking
 -include $(DEP)
