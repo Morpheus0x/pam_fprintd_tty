@@ -27,7 +27,7 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "PAM module for seamless fingerprint-then-password authentication via fprintd";
-    homepage = "https://git.example.com/myuser/pam-fprintd-tty";
+    homepage = "https://github.com/Morpheus0x/pam_fprintd_tty";
     license = licenses.mit;
     platforms = platforms.linux;
   };

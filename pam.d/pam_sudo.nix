@@ -17,7 +17,7 @@
 let
   pam-fprintd-tty = pkgs.callPackage
     ((builtins.fetchGit {
-      url = "https://git.example.com/myuser/pam-fprintd-tty";
+      url = "https://github.com/Morpheus0x/pam_fprintd_tty";
       ref = "main";
     }) + "/package.nix") { };
 in
