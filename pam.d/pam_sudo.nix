@@ -1,8 +1,7 @@
 # NixOS module: fingerprint + password authentication using pam_fprintd_passwd
 #
-# This replaces the standard pam_fprintd integration with our custom module
-# that provides a smoother UX: shows a prompt, accepts fingerprint OR
-# Enter-key / timeout to fall back to password.  Ctrl+C aborts immediately.
+# This fetches the module source from the upstream Git repository.
+# For local development, use sudo.nixos.dev.example.nix instead.
 #
 # Usage:
 #   In your configuration.nix (or wherever you manage imports):
@@ -16,15 +15,13 @@
 { config, pkgs, lib, ... }:
 
 let
-  # Build the PAM module from the project source
-  pam-fprintd-passwd = pkgs.callPackage ../package.nix { };
+  pam-fprintd-passwd = pkgs.callPackage
+    ((builtins.fetchGit {
+      url = "https://git.example.com/myuser/pam-fprintd-passwd";
+      ref = "main";
+    }) + "/package.nix") { };
 in
 {
-  # ── fprintd daemon + driver ───────────────────────────────────────
-  services.fprintd.enable = true;
-  services.fprintd.tod.enable = true;
-  services.fprintd.tod.driver = pkgs.libfprint-2-tod1-goodix;
-
   # ── sudo: fingerprint first, then password ────────────────────────
   security.pam.services.sudo = {
     # Disable the stock fprintd PAM integration
@@ -36,20 +33,6 @@ in
     #   - default              → ignore, continue to pam_unix (password)
     rules.auth.fprintd_passwd = {
       order = config.security.pam.services.sudo.rules.auth.unix.order - 10;
-      control = "[success=done default=ignore]";
-      modulePath = "${pam-fprintd-passwd}/lib/security/pam_fprintd_passwd.so";
-      settings = {
-        timeout = 10;
-      };
-    };
-  };
-
-  # ── polkit-1: same fingerprint-then-password flow ─────────────────
-  security.pam.services.polkit-1 = {
-    fprintAuth = false;
-
-    rules.auth.fprintd_passwd = {
-      order = config.security.pam.services.polkit-1.rules.auth.unix.order - 10;
       control = "[success=done default=ignore]";
       modulePath = "${pam-fprintd-passwd}/lib/security/pam_fprintd_passwd.so";
       settings = {
