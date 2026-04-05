@@ -287,8 +287,7 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
             /* Timeout – fall through to password */
             dbg(&m, "pam_fprintd_passwd: timeout reached (%ds)",
                 m.timeout_sec);
-            tty_write(&m, "\npam_fprintd_passwd: fingerprint timeout, "
-                          "falling back to password\n");
+            tty_write(&m, "Verification timed out\n");
             break;
         }
 
@@ -334,7 +333,6 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
             switch (fp_rc) {
             case FP_RESULT_MATCH:
                 dbg(&m, "pam_fprintd_passwd: fingerprint matched!");
-                tty_write(&m, "\n");
                 pam_result = PAM_SUCCESS;
                 goto done;
 
@@ -371,8 +369,7 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
         if (remaining <= 0) {
             dbg(&m, "pam_fprintd_passwd: timeout (elapsed after %ldms)",
                 elapsed_ms);
-            tty_write(&m, "\npam_fprintd_passwd: fingerprint timeout, "
-                          "falling back to password\n");
+            tty_write(&m, "Verification timed out\n");
             break;
         }
     }
