@@ -85,6 +85,67 @@ static int get_default_device(fprintd_ctx *ctx)
 }
 
 /*
+ * resolve_fprintd_owner – query the bus daemon for the unique connection
+ * name currently owning FPRINT_SERVICE and store it in ctx->fprintd_owner.
+ * Used later to validate the sender of VerifyStatus signals so an
+ * unprivileged local process cannot spoof a "verify-match" result.
+ * Returns 0 on success, -1 on failure.
+ */
+static int resolve_fprintd_owner(fprintd_ctx *ctx)
+{
+    DBusMessage *msg = dbus_message_new_method_call(
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+        "GetNameOwner");
+    if (!msg)
+        return -1;
+
+    const char *svc = FPRINT_SERVICE;
+    dbus_message_append_args(msg,
+                             DBUS_TYPE_STRING, &svc,
+                             DBUS_TYPE_INVALID);
+
+    DBusError err;
+    dbus_error_init(&err);
+
+    DBusMessage *reply = dbus_connection_send_with_reply_and_block(
+        ctx->conn, msg, DBUS_CALL_TIMEOUT, &err);
+    dbus_message_unref(msg);
+
+    if (!reply) {
+        syslog(LOG_AUTH | LOG_ERR,
+               "pam_fprintd_tty: GetNameOwner(%s) failed: %s",
+               FPRINT_SERVICE, err.message);
+        dbus_error_free(&err);
+        return -1;
+    }
+
+    const char *owner = NULL;
+    if (!dbus_message_get_args(reply, &err,
+                               DBUS_TYPE_STRING, &owner,
+                               DBUS_TYPE_INVALID)) {
+        syslog(LOG_AUTH | LOG_ERR,
+               "pam_fprintd_tty: GetNameOwner bad reply: %s",
+               err.message);
+        dbus_error_free(&err);
+        dbus_message_unref(reply);
+        return -1;
+    }
+
+    ctx->fprintd_owner = strdup(owner);
+    dbus_message_unref(reply);
+
+    if (!ctx->fprintd_owner) {
+        syslog(LOG_AUTH | LOG_ERR,
+               "pam_fprintd_tty: strdup failed for fprintd owner");
+        return -1;
+    }
+
+    return 0;
+}
+
+/*
  * release_device – call Device.Release(). Safe to call if not claimed.
  */
 static void release_device(fprintd_ctx *ctx)
@@ -197,6 +258,20 @@ int fprintd_open(fprintd_ctx *ctx)
     dbus_connection_set_exit_on_disconnect(ctx->conn, FALSE);
 
     if (get_default_device(ctx) < 0) {
+        dbus_connection_unref(ctx->conn);
+        ctx->conn = NULL;
+        return -1;
+    }
+
+    /*
+     * Resolve the unique bus name of fprintd so we can validate the
+     * sender of incoming VerifyStatus signals.  Without this check any
+     * process able to emit signals on the system bus with the fprintd
+     * interface could spoof a "verify-match" and bypass authentication.
+     */
+    if (resolve_fprintd_owner(ctx) < 0) {
+        free(ctx->device_path);
+        ctx->device_path = NULL;
         dbus_connection_unref(ctx->conn);
         ctx->conn = NULL;
         return -1;
@@ -420,6 +495,23 @@ fp_result_t fprintd_poll_result(fprintd_ctx *ctx)
         if (dbus_message_is_signal(msg,
                                    FPRINT_DEVICE_IFACE,
                                    "VerifyStatus")) {
+            /*
+             * Security: only trust signals that actually originate from
+             * the fprintd connection we resolved at open time.  Drop
+             * anything else to block spoofed "verify-match" signals.
+             */
+            const char *sender = dbus_message_get_sender(msg);
+            if (!sender || !ctx->fprintd_owner ||
+                strcmp(sender, ctx->fprintd_owner) != 0) {
+                syslog(LOG_AUTH | LOG_WARNING,
+                       "pam_fprintd_tty: dropping VerifyStatus from "
+                       "unexpected sender '%s' (expected '%s')",
+                       sender ? sender : "(null)",
+                       ctx->fprintd_owner ? ctx->fprintd_owner : "(null)");
+                dbus_message_unref(msg);
+                continue;
+            }
+
             const char *status = NULL;
             dbus_bool_t done   = FALSE;
             DBusError err;
@@ -478,6 +570,12 @@ void fprintd_close(fprintd_ctx *ctx)
     if (ctx->device_path) {
         free(ctx->device_path);
         ctx->device_path = NULL;
+    }
+
+    /* Free resolved fprintd owner name */
+    if (ctx->fprintd_owner) {
+        free(ctx->fprintd_owner);
+        ctx->fprintd_owner = NULL;
     }
 
     /* Disconnect from D-Bus */

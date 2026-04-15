@@ -19,6 +19,7 @@
 typedef struct fprintd_ctx {
     DBusConnection *conn;
     char           *device_path;   /* e.g. /net/reactivated/Fprint/Device/0 */
+    char           *fprintd_owner; /* unique bus name of fprintd, e.g. ":1.42" */
     bool            claimed;       /* true after Claim(), false after Release() */
     bool            verify_active; /* true between VerifyStart / VerifyStop  */
 } fprintd_ctx;
